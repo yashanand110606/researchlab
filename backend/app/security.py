@@ -8,11 +8,30 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import Request, Response
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
+
+# Paths exempt from rate limiting
+EXEMPT_PATHS = frozenset({
+    "/api/v1/health",
+    "/api/v1/ready",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+})
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP, respecting X-Forwarded-For header."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 
 class RateLimiter:

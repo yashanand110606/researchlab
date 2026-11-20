@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: researchlab-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-researchlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-researchlab}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-researchlab}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: researchlab-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: researchlab-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-researchlab}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-researchlab}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/backend/app
+      - storage_data:/app/backend/data/storage
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: researchlab-worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-researchlab}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-researchlab}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.tasks worker --loglevel=info --concurrency=4
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: researchlab-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  storage_data:
